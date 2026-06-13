@@ -16,11 +16,10 @@ type Manager struct {
 
 // Segment represents a recorded video file.
 type Segment struct {
-	Path      string
-	DateDir   string
-	Filename  string
-	ModTime   time.Time
-	StartTime time.Time
+	Path     string
+	DateDir  string
+	Filename string
+	ModTime  time.Time
 }
 
 // NewManager creates a storage manager rooted at root.

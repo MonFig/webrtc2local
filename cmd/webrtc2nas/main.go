@@ -35,6 +35,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Verify output directory is writable.
+	tmpFile, err := os.CreateTemp(cfg.OutputDir, ".write-test-*")
+	if err != nil {
+		logger.Error("output dir is not writable", "dir", cfg.OutputDir, "error", err)
+		os.Exit(1)
+	}
+	_ = tmpFile.Close()
+	_ = os.Remove(tmpFile.Name())
+
 	// Check ffmpeg availability.
 	if _, err := ffmpeg.LookPath(); err != nil {
 		logger.Error("ffmpeg not found in PATH", "error", err)

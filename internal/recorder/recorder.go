@@ -58,6 +58,11 @@ func (r *Recorder) runStream(ctx context.Context, s config.StreamConfig) {
 	cleanupTicker := time.NewTicker(30 * time.Second)
 	defer cleanupTicker.Stop()
 
+	// Initial cleanup in case files accumulated while the program was not running.
+	if err := r.storage.Cleanup(s.Name, s.MaxFiles); err != nil {
+		r.logger.Error("initial cleanup failed", "stream", s.Name, "error", err)
+	}
+
 	attempt := 0
 	for {
 		select {
@@ -120,7 +125,15 @@ func (r *Recorder) runStream(ctx context.Context, s config.StreamConfig) {
 }
 
 func backoffDelay(attempt int, max time.Duration) time.Duration {
-	d := time.Duration(1 << attempt) * time.Second
+	if attempt < 0 {
+		attempt = 0
+	}
+	var d time.Duration
+	if attempt >= 62 {
+		d = max
+	} else {
+		d = time.Duration(1<<attempt) * time.Second
+	}
 	if d > max {
 		d = max
 	}

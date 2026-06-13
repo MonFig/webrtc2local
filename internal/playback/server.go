@@ -108,6 +108,12 @@ func (s *Server) handleVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	camera, date, filename := parts[0], parts[1], parts[2]
+	for _, part := range []string{camera, date, filename} {
+		if part == "" || part == "." || part == ".." || strings.Contains(part, "/") || strings.Contains(part, "\\") {
+			http.Error(w, "invalid video path", http.StatusBadRequest)
+			return
+		}
+	}
 	path := filepath.Join(s.storage.StreamDir(camera), date, filename)
 	http.ServeFile(w, r, path)
 }

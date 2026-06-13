@@ -83,3 +83,44 @@ func TestTimeline(t *testing.T) {
 		t.Fatalf("files len = %d, want 1", len(resp.Files))
 	}
 }
+
+func TestHandleVideoPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{
+		Streams: []config.StreamConfig{
+			{Name: "cam1", URL: "rtsp://x", MaxFiles: 10},
+		},
+	}
+	sm := storage.NewManager(root)
+	srv := New(cfg, sm)
+
+	// Test through ServeHTTP (mux cleans ".." paths with 301, so we test other bad inputs).
+	cases := []string{
+		"/api/video/cam1/2026-01-01/video.mp4/extra",
+		"/api/video/cam1/2026-01-01/vid\\eo.mp4",
+	}
+	for _, path := range cases {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("path %q: status = %d, want 400", path, rr.Code)
+		}
+	}
+
+	// Test ".." directly via the unexported handler (defense in depth).
+	casesDirect := []string{
+		"/api/video/cam1/../secret/file",
+		"/api/video/cam1/2026-01-01/../secret",
+		"/api/video/../cam1/2026-01-01/video.mp4",
+		"/api/video/cam1/2026-01-01/..",
+	}
+	for _, path := range casesDirect {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		srv.handleVideo(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("direct path %q: status = %d, want 400", path, rr.Code)
+		}
+	}
+}

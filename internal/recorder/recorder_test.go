@@ -18,6 +18,7 @@ func TestBackoffDelay(t *testing.T) {
 		{1, 60 * time.Second, 2 * time.Second},
 		{2, 60 * time.Second, 4 * time.Second},
 		{5, 60 * time.Second, 32 * time.Second},
+		{100, 60 * time.Second, 60 * time.Second},
 	}
 	for _, c := range cases {
 		got := backoffDelay(c.attempt, c.max)
