@@ -28,8 +28,11 @@ func LookPath() (string, error) {
 }
 
 // Command builds the ffmpeg exec.Cmd for this stream.
-func (r *Runner) Command(ctx context.Context) *exec.Cmd {
-	bin, _ := LookPath()
+func (r *Runner) Command(ctx context.Context) (*exec.Cmd, error) {
+	bin, err := LookPath()
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg not found: %w", err)
+	}
 	outputPattern := filepath.Join(
 		r.storage.StreamDir(r.cfg.Name),
 		"%Y-%m-%d",
@@ -53,7 +56,7 @@ func (r *Runner) Command(ctx context.Context) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd
+	return cmd, nil
 }
 
 // Run starts ffmpeg and blocks until it exits.
@@ -61,6 +64,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := r.storage.EnsureStreamDir(r.cfg.Name); err != nil {
 		return fmt.Errorf("ensure stream dir: %w", err)
 	}
-	cmd := r.Command(ctx)
+	cmd, err := r.Command(ctx)
+	if err != nil {
+		return err
+	}
 	return cmd.Run()
 }
