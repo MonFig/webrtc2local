@@ -67,12 +67,6 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.OutputDir) == "" {
 		return fmt.Errorf("output_dir is required")
 	}
-	if c.LogLevel == "" {
-		c.LogLevel = "info"
-	}
-	if c.PlaybackHost == "" {
-		c.PlaybackHost = "127.0.0.1"
-	}
 	if c.PlaybackPort <= 0 || c.PlaybackPort > 65535 {
 		return fmt.Errorf("playback_port must be between 1 and 65535")
 	}
@@ -82,13 +76,6 @@ func (c *Config) Validate() error {
 
 	names := make(map[string]struct{})
 	for i, s := range c.Streams {
-		enabled := true
-		if s.Enabled != nil {
-			enabled = *s.Enabled
-		}
-		if !enabled {
-			continue
-		}
 		if strings.TrimSpace(s.Name) == "" {
 			return fmt.Errorf("stream[%d].name is required", i)
 		}
