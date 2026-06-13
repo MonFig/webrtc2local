@@ -1,0 +1,17 @@
+output_dir: ./recordings
+log_level: info
+playback_host: 127.0.0.1
+playback_port: 8080
+
+streams:
+  - name: living_room
+    url: rtsp://homeassistant.local:8554/living_room
+    max_files: 144          # 24 小时
+    segment_minutes: 10
+    enabled: true
+
+  - name: bedroom
+    url: rtsp://homeassistant.local:8554/bedroom
+    max_files: 1008         # 7 天
+    segment_minutes: 10
+    enabled: true
