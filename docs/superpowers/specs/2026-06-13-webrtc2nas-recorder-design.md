@@ -96,6 +96,7 @@ webrtc2nas
 ```yaml
 output_dir: ./recordings
 log_level: info
+playback_host: 127.0.0.1
 playback_port: 8080
 
 streams:
@@ -118,6 +119,7 @@ streams:
 |---|---|---|---|---|
 | `output_dir` | string | 是 | - | 录像根目录 |
 | `log_level` | string | 否 | `info` | 日志级别：`debug` / `info` / `warn` / `error` |
+| `playback_host` | string | 否 | `127.0.0.1` | Web 回放服务绑定地址，设为 `0.0.0.0` 可允许局域网访问 |
 | `playback_port` | int | 否 | `8080` | Web 回放服务端口 |
 | `streams` | array | 是 | - | 摄像头列表 |
 | `streams[].name` | string | 是 | - | 摄像头标识，决定子目录名 |
@@ -169,11 +171,13 @@ ffmpeg -loglevel error -rtsp_transport tcp \
 | `-loglevel error` | 仅输出错误，避免 ffmpeg 日志刷屏 |
 | `-rtsp_transport tcp` | 强制 TCP 传输，提高稳定性 |
 | `-c:v copy` | 视频直接复制，不重新编码，CPU 占用最低 |
-| `-c:a aac -ar 8000` | PCMA 音频转码为 AAC，适配 MP4 容器 |
+| `-c:a aac -ar 8000` | PCMA 音频转码为 AAC；保持 8kHz 采样率，适配对讲音频 |
 | `-f segment` | 分段输出模式 |
-| `-segment_time 600` | 每 600 秒（10 分钟）分一段 |
+| `-segment_time 600` | 目标每 600 秒（10 分钟）分一段 |
 | `-reset_timestamps 1` | 每段文件时间戳从 0 开始 |
 | `-strftime 1` | 文件名按当前时间格式化 |
+
+> **分段精度说明**：配合 `-c:v copy` 时，ffmpeg 会在关键帧处切割，因此实际片段长度可能略大于或小于 10 分钟（通常偏差在几秒到十几秒之间）。文件名仍按分段开始时间生成。
 
 ### 5.3 分段与文件组织
 
@@ -203,7 +207,8 @@ recordings/
 
 ### 5.4 循环删除
 
-- 每次检测到新分段写入完成后，扫描该摄像头的所有 MP4 文件。
+- 程序启动时扫描一次该摄像头的所有 MP4 文件，执行清理。
+- 之后每 30 秒定时扫描一次，检查文件数量。
 - 按文件修改时间排序，保留最新的 `max_files` 个。
 - 删除超出数量的最旧文件。
 - 若某日期目录变空，则删除该空目录。
