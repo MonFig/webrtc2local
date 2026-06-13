@@ -33,12 +33,11 @@ webrtc2nas/
 │   └── playback/
 │       ├── server.go            # HTTP API and static file serving
 │       ├── server_test.go       # playback tests
-│       └── embed.go             # embeds web/static into binary
-├── web/
-│   └── static/
-│       ├── index.html           # playback UI
-│       ├── app.js               # frontend logic
-│       └── style.css            # basic styling
+│       ├── embed.go             # embeds static/ into binary
+│       └── static/
+│           ├── index.html       # playback UI
+│           ├── app.js           # frontend logic
+│           └── style.css        # basic styling
 ├── go.mod
 ├── go.sum
 ├── config.example.yaml          # example configuration
@@ -70,7 +69,7 @@ Expected output: `go: creating new go.mod: module github.com/chenzhenrui/webrtc2
 Run:
 
 ```bash
-mkdir -p cmd/webrtc2nas internal/config internal/storage internal/ffmpeg internal/recorder internal/playback web/static
+mkdir -p cmd/webrtc2nas internal/config internal/storage internal/ffmpeg internal/recorder internal/playback/static
 ```
 
 - [ ] **Step 3: Create stub main.go**
@@ -240,11 +239,11 @@ type Config struct {
 
 // StreamConfig describes a single camera stream to record.
 type StreamConfig struct {
-	Name           string        `yaml:"name"`
-	URL            string        `yaml:"url"`
-	MaxFiles       int           `yaml:"max_files"`
-	SegmentMinutes int           `yaml:"segment_minutes"`
-	Enabled        bool          `yaml:"enabled"`
+	Name           string `yaml:"name"`
+	URL            string `yaml:"url"`
+	MaxFiles       int    `yaml:"max_files"`
+	SegmentMinutes int    `yaml:"segment_minutes"`
+	Enabled        *bool  `yaml:"enabled"`
 }
 
 // Load reads and parses a YAML config file.
@@ -267,8 +266,9 @@ func Load(path string) (*Config, error) {
 		if cfg.Streams[i].SegmentMinutes == 0 {
 			cfg.Streams[i].SegmentMinutes = 10
 		}
-		if cfg.Streams[i].LogLevel == "" {
-			cfg.Streams[i].Enabled = true
+		if cfg.Streams[i].Enabled == nil {
+			enabled := true
+			cfg.Streams[i].Enabled = &enabled
 		}
 	}
 
@@ -298,7 +298,11 @@ func (c *Config) Validate() error {
 
 	names := make(map[string]struct{})
 	for i, s := range c.Streams {
-		if !s.Enabled {
+		enabled := true
+		if s.Enabled != nil {
+			enabled = *s.Enabled
+		}
+		if !enabled {
 			continue
 		}
 		if strings.TrimSpace(s.Name) == "" {
@@ -329,42 +333,6 @@ func (s *StreamConfig) SegmentDuration() time.Duration {
 	return time.Duration(s.SegmentMinutes) * time.Minute
 }
 ```
-
-> Note: fix the typo `if cfg.Streams[i].LogLevel == ""` — it should check `Enabled` is unset. Use a pointer or separate logic. Simpler: remove the per-stream default for Enabled and rely on YAML default `false`? No, we want default true. Use:
-
-```go
-// In Load, before Validate, mark enabled streams if the field was not explicitly set.
-// YAML unmarshaling into bool gives false by default, so we cannot distinguish absent vs false.
-// Solution: use *bool in struct, or default to true in Validate.
-```
-
-Update the struct to use `*bool`:
-
-```go
-type StreamConfig struct {
-	Name           string `yaml:"name"`
-	URL            string `yaml:"url"`
-	MaxFiles       int    `yaml:"max_files"`
-	SegmentMinutes int    `yaml:"segment_minutes"`
-	Enabled        *bool  `yaml:"enabled"`
-}
-```
-
-Then in `Load`:
-
-```go
-for i := range cfg.Streams {
-	if cfg.Streams[i].SegmentMinutes == 0 {
-		cfg.Streams[i].SegmentMinutes = 10
-	}
-	if cfg.Streams[i].Enabled == nil {
-		enabled := true
-		cfg.Streams[i].Enabled = &enabled
-	}
-}
-```
-
-And in `Validate` and elsewhere, dereference with `*s.Enabled`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -673,10 +641,13 @@ func TestBuildCommand(t *testing.T) {
 	runner := NewRunner(cfg, sm)
 
 	cmd := runner.Command(context.Background())
-	if cmd.Path == "" {
-		t.Fatal("ffmpeg path not resolved")
+	if len(cmd.Args) == 0 {
+		t.Fatal("no ffmpeg args built")
 	}
 	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "ffmpeg") {
+		t.Errorf("expected ffmpeg in args: %s", args)
+	}
 	if !strings.Contains(args, "-rtsp_transport tcp") {
 		t.Errorf("missing -rtsp_transport tcp")
 	}
@@ -951,7 +922,11 @@ func New(cfg *config.Config, sm *storage.Manager, logger *slog.Logger) *Recorder
 // Start launches recording goroutines for all enabled streams.
 func (r *Recorder) Start(ctx context.Context) error {
 	for _, s := range r.cfg.Streams {
-		if !*s.Enabled {
+		enabled := true
+		if s.Enabled != nil {
+			enabled = *s.Enabled
+		}
+		if !enabled {
 			continue
 		}
 		r.wg.Add(1)
@@ -1008,12 +983,13 @@ func (r *Recorder) runStream(ctx context.Context, s config.StreamConfig) {
 		cancel()
 		<-cleanupDone
 
+		if ctx.Err() != nil {
+			// Graceful shutdown due to context cancellation.
+			r.logger.Info("stream stopped", "stream", s.Name)
+			return
+		}
+
 		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok && ctx.Err() != nil {
-				// Graceful shutdown due to context cancellation.
-				r.logger.Info("stream stopped", "stream", s.Name)
-				return
-			}
 			r.logger.Error("stream exited", "stream", s.Name, "error", err)
 		} else {
 			r.logger.Info("stream ended gracefully", "stream", s.Name)
@@ -1042,8 +1018,6 @@ func backoffDelay(attempt int, max time.Duration) time.Duration {
 	return d
 }
 ```
-
-> Note: the cleanup goroutine may continue after stream exits; the `cleanupDone` channel waits for it. Also, the cleanup ticker is shared across attempts; on reconnect it resets via `time.NewTicker`. This is correct.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1230,9 +1204,13 @@ func (s *Server) handleCameras(w http.ResponseWriter, r *http.Request) {
 		Cameras []camera `json:"cameras"`
 	}{}
 	for _, st := range s.cfg.Streams {
+		enabled := true
+		if st.Enabled != nil {
+			enabled = *st.Enabled
+		}
 		resp.Cameras = append(resp.Cameras, camera{
 			Name:    st.Name,
-			Enabled: *st.Enabled,
+			Enabled: enabled,
 		})
 	}
 	writeJSON(w, resp)
@@ -1362,7 +1340,7 @@ var staticFS embed.FS
 
 - [ ] **Step 4: Create static UI files**
 
-Create `web/static/index.html`:
+Create `internal/playback/static/index.html`:
 
 ```html
 <!DOCTYPE html>
@@ -1387,7 +1365,7 @@ Create `web/static/index.html`:
 </html>
 ```
 
-Create `web/static/style.css`:
+Create `internal/playback/static/style.css`:
 
 ```css
 body {
@@ -1436,7 +1414,7 @@ header {
 }
 ```
 
-Create `web/static/app.js`:
+Create `internal/playback/static/app.js`:
 
 ```javascript
 const cameraSelect = document.getElementById('cameraSelect');
@@ -1498,18 +1476,7 @@ cameraSelect.addEventListener('change', () => {
 loadCameras();
 ```
 
-- [ ] **Step 5: Update embed path**
-
-The `embed.go` file references `all:static`, but the static files are in `web/static`. Move/copy them to `internal/playback/static`, or use a build step to copy. For simplicity, create a symlink or copy task. Better: place static files directly in `internal/playback/static`. Update the plan:
-
-Create:
-- `internal/playback/static/index.html`
-- `internal/playback/static/style.css`
-- `internal/playback/static/app.js`
-
-And remove `web/static` or keep it as source. Use `internal/playback/static` for embedding. Adjust the file structure section.
-
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run:
 
@@ -1523,8 +1490,6 @@ Expected: PASS.
 
 ```bash
 git add internal/playback
-# Add static files to the embed directory
-git add internal/playback/static
 git commit -m "feat: add playback HTTP server and web UI
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -1555,8 +1520,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/chenzhenrui/webrtc2nas/internal/config"
+	"github.com/chenzhenrui/webrtc2nas/internal/ffmpeg"
 	"github.com/chenzhenrui/webrtc2nas/internal/playback"
 	"github.com/chenzhenrui/webrtc2nas/internal/recorder"
 	"github.com/chenzhenrui/webrtc2nas/internal/storage"
@@ -1580,7 +1547,7 @@ func main() {
 	}
 
 	// Check ffmpeg availability.
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
+	if _, err := ffmpeg.LookPath(); err != nil {
 		logger.Error("ffmpeg not found in PATH", "error", err)
 		os.Exit(1)
 	}
@@ -1623,28 +1590,6 @@ func main() {
 	rec.Wait()
 	logger.Info("goodbye")
 }
-```
-
-Add missing imports:
-
-```go
-import (
-	"context"
-	"flag"
-	"fmt"
-	"log/slog"
-	"net/http"
-	"os"
-	"os/exec"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/chenzhenrui/webrtc2nas/internal/config"
-	"github.com/chenzhenrui/webrtc2nas/internal/playback"
-	"github.com/chenzhenrui/webrtc2nas/internal/recorder"
-	"github.com/chenzhenrui/webrtc2nas/internal/storage"
-)
 ```
 
 - [ ] **Step 2: Create example config**
